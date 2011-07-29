@@ -10,7 +10,7 @@ class Game:
     
     links = []
     gold = []
-    bonds = set() # (list of [player, amount, rate, lockedRounds])
+    bonds = set() # (list of [player, amount, lockedRounds, rate])
     soldiers = []
     
     waterDiePercentage = 10

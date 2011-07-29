@@ -80,7 +80,9 @@ class SetPlayersCommand(Command):
     
 class LoadMapCommand(Command):
     sig = "lma"
-    doc = "Loads a new map. `lma [[1],[0]]` creates a map where country 0 is connected to country 1 and country 1 is connected to country 0. All contries always have sea access."
+    doc = "Loads a new map. Example: `lma [[1],[0]]` creates a map where " +\
+          "country 0 is connected to country 1 and country 1 is connected " +\
+          "to country 0. All contries always have sea access."
     def run(self, game, *a):
         links = json.loads(" ".join(a))
         if len(links) != game.players:
@@ -143,6 +145,9 @@ class SupportCommand(Command):
         elif a in (p for p,q in game.supportStack):
             print "Error: Player %d is already on the supportStack." % a
             self.backup = None
+        elif game.soldiers[a] == 0:
+            print "Error: Player %d has no soldiers." % a
+            self.backup = None
         else:
             self.supportStack.append((a,b))
             self.backup = (a,b)
@@ -166,6 +171,9 @@ class AttackCommand(Command):
             self.backup = None
         elif a in (p for p,q in game.supportStack):
             print "Error: Player %d is already on the supportStack." % a
+            self.backup = None
+        elif game.soldiers[a] == 0:
+            print "Error: Player %d has no soldiers." % a
             self.backup = None
         else:
             game.attackStack.append((a,b))
@@ -194,13 +202,21 @@ def moveGold(game, fromTeam, toTeam):
     taken = 0
     # Remove
     for p in fromTeam:
-        game.gold[p] -= game.gold[p] // 2
         taken += game.gold[p] // 2
+        game.gold[p] -= game.gold[p] // 2
+        new = set()
+        for player, amount, locked, rate in game.bonds:
+            if player == p:
+                new.add((player, amount-(amount//2), locked, rate))
+                taken += amount//2
+        game.bonds = set(bond for bond in game.bonds if bond[0] != p)
+        game.bonds.update(new)
     # Give
     for p in toTeam:
         game.gold[p] += taken // len(toTeam)
     # The rest to the attacker
     game.gold[toTeam[0]] += taken % len(toTeam)
+    print "Info: The winning team stole %d in gold and bonds" % taken
 
 def takeSoldiers(game, team, n):
     total = sum(game.soldiers[p] for p in team)
@@ -224,7 +240,8 @@ class RunBattleCommand(Command):
             self.backup = None
             return
         self.backup = (deepcopy(game.gold), deepcopy(game.soldiers),
-                       deepcopy(game.attackStack), deepcopy(game.supportStack))
+                       deepcopy(game.attackStack), deepcopy(game.supportStack),
+                       deepcopy(game.bonds))
         # Init groups
         battles = [([a],[b]) for a,b in game.attackStack]
         # Add supporters
@@ -247,10 +264,14 @@ class RunBattleCommand(Command):
                 for p in atts:
                     game.soldiers[p] = int((1-1/100.*game.waterDiePercentage) * game.soldiers[p])
                 after = sum(game.soldiers[p] for p in atts)
-                print "Team %r lost %d soldiers for attacking over water" % (atts,before-after)
+                print "Info: Team %r lost %d soldiers for attacking over water" % (atts,before-after)
+                if after == 0:
+                    print "      The team now has no soldiers, and retreat."
         # Run battles
         for atts,defs in battles:
             aArmy = sum(game.soldiers[p] for p in atts)
+            if aArmy == 0:
+                continue # Has retreated
             dArmy = sum(game.soldiers[p] for p in defs)
             aGold = sum(game.gold[p] for p in atts)
             dGold = sum(game.gold[p] for p in defs)
@@ -272,7 +293,7 @@ class RunBattleCommand(Command):
     def undo(self, game):
         if not self.backup:
             return True
-        game.gold, game.soldiers, game.attackStack, game.supportStack = self.backup
+        game.gold, game.soldiers, game.attackStack, game.supportStack, game.bonds = self.backup
         game.inbattle = True
 
 ###############################################################################
@@ -281,6 +302,20 @@ class RunBattleCommand(Command):
 class RunEconomyCommand(Command):
     sig = "rec"
     doc = "Make a step in the economy, sending returns from bonds"
+    def run(self, game):
+        self.backup = deepcopy((game.gold, game.bonds))
+        newList = []
+        for player, amount, lockedRounds, rate in game.bonds:
+            game.gold[player] += int(amount * rate/100.)
+            print "Info: Player %d got %d earnings from a bond." % (player, int(amount * rate/100.))
+            if lockedRounds == 1:
+                game.gold[player] += amount
+                print "Info: Released a bond of value %d to player %d." % (amount, player)
+            else:
+                newList.append((player, amount, lockedRounds-1, rate))
+        game.bonds = newList
+    def undo(self, game):
+        game.gold, game.bonds = self.backup
 
 class SetGoldCommand(Command):
     sig = "sgo"
@@ -374,18 +409,19 @@ class InvestCommand(Command):
     sig = "inv"
     doc = "Invest for player a, n gold for k rounds at rate y."
     def run(self, game, a, n, k, y):
-        a, n, k, y = int(a), int(n), int(k), float(y)
+        a, n, k, y = int(a), int(n), int(k), int(y)
         if n <= 0:
             print "Error: n must be > 0. To retract, use `ret`."
             self.backup = None
         elif game.gold[a] < n:
             print "Error: Player %d has only %d gold" % (a, game.gold[a])
             self.backup = None
-        elif n < 0:
+        else:
             game.gold[a] -= n
             bond = (a, n, k, y)
             game.bonds.add(bond)
             self.backup = bond
+            print "Info: Created bond %r for player %d" % (bond[1:], a)
     def undo(self, game):
         if not self.backup:
             return True
