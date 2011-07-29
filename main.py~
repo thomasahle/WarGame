@@ -6,8 +6,6 @@ import commands
 backup = "gameBackup.cmds"
 
 class Game:
-    players = 0
-    
     links = []
     gold = []
     bonds = set() # (list of [player, amount, rate, lockedRounds])

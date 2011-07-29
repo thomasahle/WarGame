@@ -136,10 +136,7 @@ class TransferCommand(Command):
     doc = "Transfers from player a to b, n gold"
     def run(self, game, a, b, n):
         a, b, n = int(a), int(b), int(n)
-        if n <= 0:
-            print "Error: Gold transfers must be positive"
-            self.backup = None
-        elif game.gold[a] < n:
+        if game.gold[a] < n:
             print "Error: Player %d has only %d gold" % (a, game.gold[a])
             self.backup = None
         else:

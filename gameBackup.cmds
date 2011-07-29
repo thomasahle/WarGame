@@ -1,0 +1,10 @@
+sps 2
+lma []
+sgo 0 150
+sgo 1 -50
+sgo 2 0
+sbs []
+sbs []
+sss 0 0
+sss 1 0
+sss 2 0
