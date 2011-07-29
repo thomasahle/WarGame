@@ -13,8 +13,11 @@ class Game:
     bonds = set() # (list of [player, amount, rate, lockedRounds])
     soldiers = []
     
+    waterDiePercentage = 10
+    
     inbattle = False
-    battleStack = []
+    attackStack = []
+    supportStack = []
     
     undoStack = []
 game = Game()
@@ -45,7 +48,9 @@ def saveState():
 
 if __name__ == "__main__":
     while True:
-        cmd = raw_input(": ")
+        cmd = raw_input("% ").strip()
+        if not cmd:
+            continue
         isdone = runCmd(cmd)
         if isdone:
             break

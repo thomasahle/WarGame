@@ -36,8 +36,8 @@ class PrintReportCommand(Command):
         print "Economy:"
         for p in range(game.players):
             print "    Player %d has %d gold and %d soldiers" % (p, game.gold[p], game.soldiers[p])
-            print "    His/her bonds are %r" % [bond for bond in game.bonds if bond[0]==p]
-        if game.inbattle:
+            print "    His/her bonds are %r" % [bond[1:] for bond in game.bonds if bond[0]==p]
+        if game.inbattle:‭
             print "We're currently planning a battle"
         else: print "No battles are currently being planned"
         print "=========="
@@ -63,9 +63,9 @@ class SetPlayersCommand(Command):
     def run(self, game, n):
         self.backup = game.players
         game.players = int(n)
-        while len(game.gold) <= game.players:
+        while len(game.gold) < game.players:
             game.gold.append(0)
-        while len(game.soldiers) <= game.players:
+        while len(game.soldiers) < game.players:
             game.soldiers.append(0)
     def repr(self, game):
         return "%s %s" % (self.sig, game.players)
@@ -85,7 +85,132 @@ class LoadMapCommand(Command):
         game.links = self.backup
 
 ###############################################################################
-# Economy
+# Battle commands
+
+class SetWaterDiePercentage(Command):
+    sig = "swd"
+    doc = "Sets the percentage of soldiers that die in an overseas battle."
+    def run(self, game, p):
+        self.backup = game.waterDiePercentage
+        game.waterDiePercentage = int(p)
+    def repr(self, game):
+        return "%s %d" % (self.sig, game.waterDiePercentage)
+    def undo(self, game):
+        game.waterDiePercentage = self.backup
+
+class NewBattleCommand(Command):
+    sig = "nba"
+    doc = "Starts a new battle session"
+    def run(self, game):
+        if game.battleStack or game.inbattle:
+            print "Warning: You already had a battle going." +\
+                  " If you wanted it, undo this and use `rba` to execute it."
+            self.backup = None
+        else:
+            self.backup = (deepcopy(game.battleStack), game.inbattle)
+            game.inbattle = True
+            game.battleStack = []
+    def undo(self, game):
+        game.battleStack, game.inbattle = self.backup
+
+class SupportCommand(Command):
+    sig = "sup"
+    doc = "Player a chooses to support player b during the next battle."
+    def run(self, game):
+        if not game.inbattle:
+            print "Error: Not currently in a battle."
+            self.backup = None
+        elif not game.attackStack or not game.supportStack:
+            print "Warning: No battle actions were entered."
+
+def supportDfs(game, src, dst):
+    """ Returns true if src supports dst, directly or indirectly """
+    cache = set()
+    while src != dst:
+        if src in cache:
+            retrun False
+        for a,b in game.supportStack:
+            if a == src:
+                src = a
+                break
+    return True
+
+def moveGold(fromTeam, toTeam):
+    taken = 0
+    # Remove
+    for p in fromTeam:
+        game.gold[p] -= game.gold[p] // 2
+        taken += game.gold[p] // 2
+    # Give
+    for p in toTeam:
+        game.gold[p] += taken // len(toTeam)
+    # The rest to the attacker
+    game.gold[toTeam[0]] += taken % len(toTeam)
+
+def takeSoldiers(team, n):
+    total = sum(game.soldiers[p] for p in team)
+    for p in team:
+        died = int(game.soldiers[p]/float(total) * n)
+        game.soldiers[p] -= died
+        n -= died
+    # The rest to the firsts
+    while n > 0:
+        for p in team:
+            if n > 0:
+                game.soldiers[p] -= 1
+                n -= 1
+
+class RunBattleCommand(Command):
+    sig = "rba"
+    doc = "Run the current battle session"
+    def run(self, game):
+        self.backup = (deepcopy(game.gold), deepcopy(game.soldiers))
+        # Init groups
+        battles = [([a],[b]) for a,b in game.attackStack]
+        # Add supporters
+        for p in range(game.players):
+            for atts,defs in battles:
+                # Notice it is important that we check support for the defender
+                # first, as there may be love/hate loops
+                if supportDfs(game, p, defs[0]):
+                    defs.append(p)
+                elif supportDfs(game, p, atts[0]):
+                    atts.append(p)
+        # Sort battles by biggest army
+        battles.sort(key = lambda atts,defs: -game.soldiers[atts[0]])
+        # Kill water attacking soldiers
+        for atts,defs in battles:
+            if defs[0] not in game.links[atts[0]]:
+                for p in atts:
+                    game.soldiers[p] = int((1-1/100.*game.waterDiePercentage) * game.soldiers[p])
+        # Run battles
+        for atts,defs in battles:
+            aArmy = sum(game.soldiers[p] for p in atts)
+            dArmy = sum(game.soldiers[p] for p in defs)
+            aGold = sum(game.gold[p] for p in atts)
+            dGold = sum(game.gold[p] for p in defs)
+            # Assign gold
+            if aArmy > dArmy:
+                moveGold(defs, atts)
+            elif dArmy > aArmy:
+                moveGold(atts, defs)
+            # Assign deads
+            deads = min(aArmy, dArmy)
+            takeSoldiers(atts, deads)
+            takeSoldiers(defs, deads)
+            print "In a battle between %r and %r %d soldiers died." % (atts, defs, deads)
+            print "They will be forever missed."
+    def repr(self, game):
+        return self.sig
+    def undo(self, game):
+        game.gold, game.soldiers = self.backup
+
+###############################################################################
+# Economy commands
+
+class RunEconomyCommand(Command):
+    sig = "rec"
+    doc = "Make a step in the economy, sending returns from bonds"
 
 class SetGoldCommand(Command):
     sig = "sgo"
@@ -102,17 +227,17 @@ class SetGoldCommand(Command):
 
 class SetBondsCommand(Command):
     sig = "sbs"
-    doc = "Sets the current bond holdings of a player as a [[to a specific integer value"
+    doc = "Sets the current bond holdings of a player as a list [[amount, rate, lockedRounds]], where rate is a the roundly return rate in percent"
     def run(self, game, a, *bonds):
         a = int(a)
         self.backup = deepcopy(game.bonds)
-        bonds = json.loads(" ".join(bonds), locals())
-        bonds = set((a,)+bond for bond in bonds)
-        game.bonds += bonds
+        bonds = json.loads(" ".join(bonds))
+        bonds = set((a,)+tuple(bond) for bond in bonds)
+        game.bonds.update(bonds)
     def repr(self, game):
         lines = []
         for i in range(game.players):
-            lines.append("%s %r" % (self.sig,
+            lines.append("%s %d %r" % (self.sig, i,
                     [bond[1:] for bond in game.bonds if bond[0] == i]))
         return "\n".join(lines)
     def undo(self, game):
@@ -158,8 +283,8 @@ class BuyCommand(Command):
     doc = "Convenient method for letting player a buy n soldiers for price 1."
     def run(self, game, a, n):
         a, n = int(a), int(n)
-        if n <= 0:
-            print "Error: n must by > 0. Soldiers can't be sold."
+        if n < 0:
+            print "Error: n must by >= 0. Soldiers can't be sold."
             self.backup = None
         elif game.gold[a] < n:
             print "Error: Player %d has only %d gold" % (a, game.gold[a])
