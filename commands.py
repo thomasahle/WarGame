@@ -37,9 +37,13 @@ class PrintReportCommand(Command):
         for p in range(game.players):
             print "    Player %d has %d gold and %d soldiers" % (p, game.gold[p], game.soldiers[p])
             print "    His/her bonds are %r" % [bond[1:] for bond in game.bonds if bond[0]==p]
-        if game.inbattle:‭
-            print "We're currently planning a battle"
-        else: print "No battles are currently being planned"
+        if game.inbattle:
+            print "Currently on the supportStack:"
+            print "    " + " ".join(map(repr,game.supportStack))
+            print "Currently on the attackStack:"
+            print "    " + " ".join(map(repr,game.attackStack))
+        else:
+            print "No battles are currently being planned"
         print "=========="
     def undo(self, game):
         return True
@@ -116,19 +120,57 @@ class NewBattleCommand(Command):
 class SupportCommand(Command):
     sig = "sup"
     doc = "Player a chooses to support player b during the next battle."
-    def run(self, game):
+    def run(self, game, a, b):
+        a, b = int(a), int(b)
         if not game.inbattle:
             print "Error: Not currently in a battle."
             self.backup = None
-        elif not game.attackStack or not game.supportStack:
-            print "Warning: No battle actions were entered."
+        elif a in (p for p,q in game.attackStack):
+            print "Error: Player %d is already on the attackStack." % a
+            self.backup = None
+        elif a in (p for p,q in game.supportStack):
+            print "Error: Player %d is already on the supportStack." % a
+            self.backup = None
+        else:
+            self.supportStack.append((a,b))
+            self.backup = (a,b)
+    def repr(self, game):
+        return "\n".join("%s %d %d" % (self.sig, a, b) for a,b in game.supportStack)
+    def undo(self, game):
+        if not self.backup:
+            return True
+        self.supportStack.remove(self.backup)
+
+class AttackCommand(Command):
+    sig = "att"
+    doc = "Player a chooses to attack player b during the next battle."
+    def run(self, game, a, b):
+        a, b = int(a), int(b)
+        if not game.inbattle:
+            print "Error: Not currently in a battle."
+            self.backup = None
+        elif a in (p for p,q in game.attackStack):
+            print "Error: Player %d is already on the attackStack." % a
+            self.backup = None
+        elif a in (p for p,q in game.supportStack):
+            print "Error: Player %d is already on the supportStack." % a
+            self.backup = None
+        else:
+            self.attackStack.append((a,b))
+            self.backup = (a,b)
+    def repr(self, game):
+        return "\n".join("%s %d %d" % (self.sig, a, b) for a,b in game.attackStack)
+    def undo(self, game):
+        if not self.backup:
+            return True
+        self.attackStack.remove(self.backup)
 
 def supportDfs(game, src, dst):
     """ Returns true if src supports dst, directly or indirectly """
     cache = set()
     while src != dst:
         if src in cache:
-            retrun False
+            return False
         for a,b in game.supportStack:
             if a == src:
                 src = a
@@ -164,7 +206,12 @@ class RunBattleCommand(Command):
     sig = "rba"
     doc = "Run the current battle session"
     def run(self, game):
-        self.backup = (deepcopy(game.gold), deepcopy(game.soldiers))
+        if not self.inbattle:
+            print "Error: Not currently in a battle, use `nba` to start one."
+            self.backup = None
+            return
+        self.backup = (deepcopy(game.gold), deepcopy(game.soldiers),
+                       deepcopy(game.attackStack), deepcopy(game.supportStack))
         # Init groups
         battles = [([a],[b]) for a,b in game.attackStack]
         # Add supporters
@@ -200,10 +247,17 @@ class RunBattleCommand(Command):
             takeSoldiers(defs, deads)
             print "In a battle between %r and %r %d soldiers died." % (atts, defs, deads)
             print "They will be forever missed."
+        # Clear stuff
+        game.inbattle = False
+        del game.attackStack[:]
+        del game.supportStack[:]
     def repr(self, game):
         return self.sig
     def undo(self, game):
-        game.gold, game.soldiers = self.backup
+        if not self.backup:
+            return True
+        game.gold, game.soldiers, game.attackStack, game.supportStack = self.backup
+        game.inbattle = True
 
 ###############################################################################
 # Economy commands
