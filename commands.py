@@ -71,6 +71,8 @@ class SetPlayersCommand(Command):
             game.gold.append(0)
         while len(game.soldiers) < game.players:
             game.soldiers.append(0)
+        while len(game.links) < game.players:
+            game.links.append([])
     def repr(self, game):
         return "%s %s" % (self.sig, game.players)
     def undo(self, game):
@@ -80,12 +82,18 @@ class LoadMapCommand(Command):
     sig = "lma"
     doc = "Loads a new map. `lma [[1],[0]]` creates a map where country 0 is connected to country 1 and country 1 is connected to country 0. All contries always have sea access."
     def run(self, game, *a):
-        self.backup = game.links
-        game.links = json.loads(" ".join(a))
+        links = json.loads(" ".join(a))
+        if len(links) != game.players:
+            print "Error: each %d players must have a (possibly empty) sublist." % game.players
+            self.backup = None
+        else:
+            self.backup = game.links
+            game.links = links
     def repr(self, game):
         return "%s %r" % (self.sig, game.links)
     def undo(self, game):
-        assert hasattr(self,"backup"), "Must run 'run' before 'undo'"
+        if not self.backup:
+            return True
         game.links = self.backup
 
 ###############################################################################
@@ -106,16 +114,20 @@ class NewBattleCommand(Command):
     sig = "nba"
     doc = "Starts a new battle session"
     def run(self, game):
-        if game.battleStack or game.inbattle:
+        if game.supportStack or game.attackStack or game.inbattle:
             print "Warning: You already had a battle going." +\
                   " If you wanted it, undo this and use `rba` to execute it."
             self.backup = None
         else:
-            self.backup = (deepcopy(game.battleStack), game.inbattle)
+            self.backup = deepcopy((game.supportStack, game.attackStack, game.inbattle))
             game.inbattle = True
-            game.battleStack = []
+            del game.supportStack[:]
+            del game.attackStack[:]
+    def repr(self, game):
+        if game.inbattle:
+            return self.sig
     def undo(self, game):
-        game.battleStack, game.inbattle = self.backup
+        game.supportStack, game.attackStack, game.inbattle = self.backup
 
 class SupportCommand(Command):
     sig = "sup"
@@ -139,7 +151,7 @@ class SupportCommand(Command):
     def undo(self, game):
         if not self.backup:
             return True
-        self.supportStack.remove(self.backup)
+        game.supportStack.remove(self.backup)
 
 class AttackCommand(Command):
     sig = "att"
@@ -156,14 +168,14 @@ class AttackCommand(Command):
             print "Error: Player %d is already on the supportStack." % a
             self.backup = None
         else:
-            self.attackStack.append((a,b))
+            game.attackStack.append((a,b))
             self.backup = (a,b)
     def repr(self, game):
         return "\n".join("%s %d %d" % (self.sig, a, b) for a,b in game.attackStack)
     def undo(self, game):
         if not self.backup:
             return True
-        self.attackStack.remove(self.backup)
+        game.attackStack.remove(self.backup)
 
 def supportDfs(game, src, dst):
     """ Returns true if src supports dst, directly or indirectly """
@@ -171,13 +183,14 @@ def supportDfs(game, src, dst):
     while src != dst:
         if src in cache:
             return False
+        cache.add(src)
         for a,b in game.supportStack:
             if a == src:
                 src = a
                 break
     return True
 
-def moveGold(fromTeam, toTeam):
+def moveGold(game, fromTeam, toTeam):
     taken = 0
     # Remove
     for p in fromTeam:
@@ -189,7 +202,7 @@ def moveGold(fromTeam, toTeam):
     # The rest to the attacker
     game.gold[toTeam[0]] += taken % len(toTeam)
 
-def takeSoldiers(team, n):
+def takeSoldiers(game, team, n):
     total = sum(game.soldiers[p] for p in team)
     for p in team:
         died = int(game.soldiers[p]/float(total) * n)
@@ -206,7 +219,7 @@ class RunBattleCommand(Command):
     sig = "rba"
     doc = "Run the current battle session"
     def run(self, game):
-        if not self.inbattle:
+        if not game.inbattle:
             print "Error: Not currently in a battle, use `nba` to start one."
             self.backup = None
             return
@@ -220,16 +233,21 @@ class RunBattleCommand(Command):
                 # Notice it is important that we check support for the defender
                 # first, as there may be love/hate loops
                 if supportDfs(game, p, defs[0]):
-                    defs.append(p)
+                    if p != defs[0]:
+                        defs.append(p)
                 elif supportDfs(game, p, atts[0]):
-                    atts.append(p)
+                    if p != atts[0]:
+                        atts.append(p)
         # Sort battles by biggest army
-        battles.sort(key = lambda atts,defs: -game.soldiers[atts[0]])
+        battles.sort(key = lambda (atts,defs): -game.soldiers[atts[0]])
         # Kill water attacking soldiers
         for atts,defs in battles:
             if defs[0] not in game.links[atts[0]]:
+                before = sum(game.soldiers[p] for p in atts)
                 for p in atts:
                     game.soldiers[p] = int((1-1/100.*game.waterDiePercentage) * game.soldiers[p])
+                after = sum(game.soldiers[p] for p in atts)
+                print "Team %r lost %d soldiers for attacking over water" % (atts,before-after)
         # Run battles
         for atts,defs in battles:
             aArmy = sum(game.soldiers[p] for p in atts)
@@ -238,21 +256,19 @@ class RunBattleCommand(Command):
             dGold = sum(game.gold[p] for p in defs)
             # Assign gold
             if aArmy > dArmy:
-                moveGold(defs, atts)
+                moveGold(game, defs, atts)
             elif dArmy > aArmy:
-                moveGold(atts, defs)
+                moveGold(game, atts, defs)
             # Assign deads
             deads = min(aArmy, dArmy)
-            takeSoldiers(atts, deads)
-            takeSoldiers(defs, deads)
-            print "In a battle between %r and %r %d soldiers died." % (atts, defs, deads)
+            takeSoldiers(game, atts, deads)
+            takeSoldiers(game, defs, deads)
+            print "In a battle between %r and %r %d soldiers died." % (atts, defs, deads*2)
             print "They will be forever missed."
         # Clear stuff
         game.inbattle = False
         del game.attackStack[:]
         del game.supportStack[:]
-    def repr(self, game):
-        return self.sig
     def undo(self, game):
         if not self.backup:
             return True
