@@ -48,10 +48,18 @@ def saveState():
 
 if __name__ == "__main__":
     while True:
-        cmd = raw_input("% ").strip()
+        try:
+            cmd = raw_input("% ").strip()
+        except EOFError:
+            break
         if not cmd:
             continue
-        isdone = runCmd(cmd)
+        try:
+            isdone = runCmd(cmd)
+        except:
+            import sys, traceback
+            traceback.print_exc()
+            isdone = False
         if isdone:
             break
         saveState()

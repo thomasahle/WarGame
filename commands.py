@@ -29,12 +29,15 @@ class ExitCommand(Command):
 
 class PrintReportCommand(Command):
     sig = "print"
-    doc = "Prints a report of the current game state."
-    def run(self, game):
+    doc = "Prints a report of the current game state. If called with an argument p, it prints only the state of that player."
+    def run(self, game, *args):
+        if len(args) == 1:
+            players = [int(args[0])]
+        else: players = range(game.players)
         print "=========="
         print "The map has the connections:", game.links
         print "Economy:"
-        for p in range(game.players):
+        for p in players:
             print "    Player %d has %d gold and %d soldiers" % (p, game.gold[p], game.soldiers[p])
             print "    His/her bonds are %r" % [bond[1:] for bond in game.bonds if bond[0]==p]
         if game.inbattle:
@@ -80,7 +83,7 @@ class SetPlayersCommand(Command):
     
 class SetMapCommand(Command):
     sig = "sma"
-    doc = "Sets a new map. Example: `lma [[1],[0]]` creates a map where " +\
+    doc = "Sets a new map. Example: `sma [[1],[0]]` creates a map where " +\
           "country 0 is connected to country 1 and country 1 is connected " +\
           "to country 0. All contries always have sea access."
     def run(self, game, *a):
@@ -412,16 +415,17 @@ def takeSoldiers(game, team, n):
     total = sum(game.soldiers[p] for p in team)
     if total == 0:
         return
+    remainder = n
     for p in team:
         died = int(game.soldiers[p]/float(total) * n)
         game.soldiers[p] -= died
-        n -= died
-    # The rest to the firsts
-    while n > 0:
+        remainder -= died
+    # The remainder by rotation
+    while remainder > 0:
         for p in team:
-            if n > 0:
+            if remainder > 0 and game.soldiers[p] > 0:
                 game.soldiers[p] -= 1
-                n -= 1
+                remainder -= 1
 
 class RunBattleCommand(Command):
     sig = "rba"
