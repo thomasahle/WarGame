@@ -1,1 +1,10 @@
-Hello World!
+Some WarGame
+------------
+
+In this is a group role playing game, groups of three players compete in making their country as rich as possible during some time interval.
+They do this by creating alliances with other teams, going to war and investing in bonds.
+
+The game doesn't really have name. When it was used in "Spejderfesival 2011" it went under the name "Diplomacy, Money and War". If you have tried the game, and have a good suggestion for a name, please contact the authors.
+For a list of authers see the AUTHORS file.
+
+The game is free to use and modify by anybody, but the supporting code is available under the gpl only, as stated in the LICENSE file.
